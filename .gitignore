@@ -1,0 +1,15 @@
+# --- Database / Environment Config ---
+config.php
+
+# --- Local Server Noise ---
+.DS_Store
+Thumbs.db
+*.log
+
+# --- IDE Folders ---
+.vscode/
+.idea/
+
+# --- Temporary Files ---
+/tmp/
+*.swp
