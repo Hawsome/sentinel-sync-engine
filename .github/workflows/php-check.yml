@@ -1,0 +1,13 @@
+name: PHP Lint & Syntax Check
+on: [push]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+      - name: Lint check
+        run: find src -name "*.php" -exec php -l {} \;
