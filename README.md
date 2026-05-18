@@ -4,9 +4,10 @@
 [![Tech Stack](https://img.shields.io/badge/Stack-PHP%20|%20MySQL%20|%20PDO-blue)](https://github.com/hawesome)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/hawesome)
+[![PHP Lint & Syntax Check](https://github.com/Hawsome/sentinel-sync-engine/actions/workflows/php-check.yml/badge.svg)](https://github.com/Hawsome/sentinel-sync-engine/actions/workflows/php-check.yml)
 
 ## The Problem
-In high-stakes environments, particularly for nonprofits and mission-driven organizations, data loss is not an option. Standard synchronization scripts often fail due to:
+In high-stakes environments, particularly for nonprofits and mission-driven organisations, data loss is not an option. Standard synchronisation scripts often fail due to:
 *   **Network Timeouts:** External API or database connectivity drops.
 *   **Server Crashes:** Resource exhaustion during large data migrations.
 *   **Data Duplication:** Retrying a failed sync often results in "double-counting" records.
@@ -14,9 +15,9 @@ In high-stakes environments, particularly for nonprofits and mission-driven orga
 **Sentinel is built for when things break.**
 
 ## The Solution
-Sentinel is a PHP-based synchronization engine designed with a **"Failure-First"** mentality. It moves data from a Source (CMS) to a Destination (Relational DB) while ensuring:
-1.  **Zero Data Loss:** Implements a **Dead Letter Queue (DLQ)** to serialize and capture failed syncs for later recovery.
-2.  **Idempotency:** Utilizes unique constraints to ensure that retrying a sync never results in duplicate data.
+Sentinel is a PHP-based synchronisation engine designed with a **"Failure-First"** mentality. It moves data from a Source (CMS) to a Destination (Relational DB) while ensuring:
+1.  **Zero Data Loss:** Implements a **Dead Letter Queue (DLQ)** to serialise and capture failed syncs for later recovery.
+2.  **Idempotency:** Utilises unique constraints to ensure that retrying a sync never results in duplicate data.
 3.  **Self-Healing:** A dedicated **Recovery Worker** that monitors the DLQ and re-processes items once the system is back online.
 
 ## Architecture Flow
@@ -32,7 +33,7 @@ graph TD
 ## Key Engineering Features
 *   **Financial Precision:** Stores currency as integers (kobos) in source/transit to avoid floating-point rounding errors, only converting to `DECIMAL(10,2)` at the final destination.
 *   **Resilience Pattern:** Uses a `try-catch-queue` loop. A single record failure does not crash the entire migration process.
-*   **Data Normalization:** Maps unstructured/messy CMS meta-data into a strict, indexed Relational SQL schema optimized for BI and Reporting.
+*   **Data Normalisation:** Maps unstructured/messy CMS metadata into a strict, indexed Relational SQL schema optimised for BI and Reporting.
 *   **Security:** Full implementation of **PDO Prepared Statements** to eliminate SQL Injection risks.
 
 ## Technical Decisions: Why I built it this way
