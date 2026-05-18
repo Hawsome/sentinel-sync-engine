@@ -29,14 +29,38 @@ try {
             echo "Synced! \n";
 
         } catch (Exception $e) {
-            echo "FAILED! Saving to Dead Letter Queue... ";
-            $dlq_sql = "INSERT INTO sync_dead_letter_queue (payload, error_message) VALUES (:payload, :error)";
-            $dlq_stmt = $source_pdo->prepare($dlq_sql);
-            $dlq_stmt->execute([
-                ':payload' => json_encode($row),
-                ':error'   => $e->getMessage()
-            ]);
-            echo "Saved. \n";
+            echo "FAILED! ";
+            
+            $error_payload = [
+                'data' => $row,
+                'error' => $e->getMessage(),
+                'timestamp' => date('Y-m-d H:i:s')
+            ];
+
+            try {
+                // Attempt 1: Save to Database DLQ
+                $dlq_sql = "INSERT INTO sync_dead_letter_queue (payload, error_message) VALUES (:payload, :error)";
+                $dlq_stmt = $source_pdo->prepare($dlq_sql);
+                $dlq_stmt->execute([
+                    ':payload' => json_encode($row),
+                    ':error'   => $e->getMessage()
+                ]);
+                echo "Saved to DB Queue. \n";
+
+            } catch (PDOException $db_error) {
+                // Attempt 2: Database is DEAD. Save to emergency local file.
+                echo "DB DEAD. Saving to Emergency Log... ";
+                
+                // Create a 'logs' folder if it doesn't exist
+                if (!file_exists('logs')) { mkdir('logs', 0777, true); }
+                
+                $log_file = 'logs/emergency_sync_' . date('Y-m-d') . '.json';
+                
+                // Append the failed data to a local file
+                file_put_contents($log_file, json_encode($error_payload) . PHP_EOL, FILE_APPEND);
+                
+                echo "Saved to disk. \n";
+            }
         }
     }
 } catch (PDOException $e) {
