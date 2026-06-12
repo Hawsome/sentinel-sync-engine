@@ -1,0 +1,8 @@
+{
+    "name": "haw/sentinel-sync-engine",
+    "description": "Sentinel Sync Engine",
+    "type": "project",
+    "require": {
+        "vlucas/phpdotenv": "^5.6"
+    }
+}

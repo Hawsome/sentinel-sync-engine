@@ -1,6 +1,6 @@
 # --- Database / Environment Config ---
-config.php
-
+.env
+vendor/
 # --- Local Server Noise ---
 .DS_Store
 Thumbs.db
