@@ -1,77 +1,117 @@
 <?php
 require_once 'config.php';
+require_once 'helpers.php';
 
-// 1. Identify the log file
-$log_file = __DIR__ . '/../logs/emergency_sync_' . date('Y-m-d') . '.json';
+// Scan ALL unprocessed emergency logs, not just today's. Prevents date-boundary data loss.
+if (!file_exists(__DIR__ . '/../logs')) {
+    mkdir(__DIR__ . '/../logs', 0750, true);
+}
+$log_dir   = __DIR__ . '/../logs';
+$log_files = glob($log_dir . '/emergency_sync_*.json');
 
-if (!file_exists($log_file)) {
-    die("No emergency logs found for today. \n");
+if (empty($log_files)) {
+    log_msg('INFO', "No unprocessed emergency logs found.");
+    exit(0);
 }
 
+// Atomic lock prevents two concurrent ingestor instances from racing across log files.
+$lock_file   = $log_dir . '/emergency.lock';
+$lock_handle = fopen($lock_file, 'c');
+if (!$lock_handle || !flock($lock_handle, LOCK_EX | LOCK_NB)) {
+    die("Emergency ingestor is already running.\n");
+}
+ftruncate($lock_handle, 0);
+fwrite($lock_handle, (string)getmypid());
+
 try {
-    // 2. We only need the Destination PDO now (Source DB was dead, remember? 🌚)
-    $dest_pdo = new PDO("mysql:host=".DB_HOST.";port=".DB_PORT.";dbname=".DB_DEST, DB_USER, DB_PASS);
+    $dest_pdo = new PDO(
+        "mysql:host=" . DB_HOST . ";port=" . DB_PORT . ";dbname=" . DB_DEST . ";charset=utf8mb4",
+        DB_USER, DB_PASS
+    );
     $dest_pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
-    echo "Emergency Ingestor Started. Reading $log_file... \n";
-
-    // 3. Read the file line by line (Memory Safe)
-    $handle = fopen($log_file, "r");
-    if (!$handle) {
-        die("Could not open log file.\n");
-    }
-
-    $sql = "INSERT INTO synced_donations (remote_id, email, amount_naira, sync_status) 
+    $sql = "INSERT INTO synced_donations (remote_id, email, amount_naira, sync_status)
             VALUES (:remote_id, :email, :amount, 'EMERGENCY_RECOVERY')
-            ON DUPLICATE KEY UPDATE sync_status = 'EMERGENCY_UPDATED'"; 
+            ON DUPLICATE KEY UPDATE
+                email        = VALUES(email),
+                amount_naira = VALUES(amount_naira),
+                sync_status  = 'EMERGENCY_UPDATED',
+                processed_at = CURRENT_TIMESTAMP";
     $stmt = $dest_pdo->prepare($sql);
 
-    $dest_pdo->beginTransaction();
-    $batch_size = 500;
-    $count = 0;
+    foreach ($log_files as $log_file) {
+        log_msg('INFO', "Processing: $log_file");
 
-    while (($line = fgets($handle)) !== false) {
-        $line = trim($line);
-        if (empty($line)) continue;
+        // Rename BEFORE processing. Prevents re-processing if we crash mid-file.
+        $in_progress_file = $log_file . '.inprogress';
+        if (!rename($log_file, $in_progress_file)) {
+            log_msg('ERROR', "Could not rename $log_file. Skipping to avoid double-processing.");
+            continue;
+        }
 
-        $payload = json_decode($line, true);
-        if (!isset($payload['data'])) continue;
-        $row = $payload['data']; // Extract the original donation data
+        $handle = fopen($in_progress_file, 'r');
+        if (!$handle) {
+            log_msg('ERROR', "Could not open $in_progress_file");
+            rename($in_progress_file, $log_file);
+            continue;
+        }
 
-        try {
-            echo "Ingesting ID: " . $row['id'] . "... ";
+        $dest_pdo->beginTransaction();
+        $count   = 0;
+        $skipped = 0;
 
-            $amount_in_naira = $row['amount_kobo'] / 100;
-            
-            $stmt->execute([
-                ':remote_id' => $row['id'],
-                ':email'     => $row['donor_email'],
-                ':amount'    => $amount_in_naira
-            ]);
+        while (($line = fgets($handle)) !== false) {
+            $line = trim($line);
+            if (empty($line)) continue;
 
-            echo "Synced! \n";
-            $count++;
+            $envelope = json_decode($line, true);
+            $row      = isset($envelope['data']) ? $envelope['data'] : null;
 
-            // Batching
-            if ($count % $batch_size === 0) {
-                $dest_pdo->commit();
-                $dest_pdo->beginTransaction();
+            $validation_error = ($row !== null) ? validate_row($row) : 'missing data envelope';
+            if ($validation_error !== null) {
+                log_msg('WARN', "Skipping malformed line in $in_progress_file: $validation_error");
+                $skipped++;
+                continue;
             }
 
-        } catch (Exception $e) {
-            echo "Still failing: " . $e->getMessage() . "\n";
+            try {
+                $amount_naira = round((int)$row['amount_kobo'] / 100, 2);
+
+                $stmt->execute([
+                    ':remote_id' => (int)$row['id'],
+                    ':email'     => $row['donor_email'],
+                    ':amount'    => $amount_naira,
+                ]);
+
+                $count++;
+
+                if ($count % BATCH_SIZE === 0) {
+                    $dest_pdo->commit();
+                    log_msg('INFO', "Committed batch of " . BATCH_SIZE . " rows from $in_progress_file");
+                    $dest_pdo->beginTransaction();
+                }
+
+            } catch (Exception $e) {
+                log_msg('ERROR', "Row ID {$row['id']} still failing: " . $e->getMessage());
+                $skipped++;
+            }
         }
-    }
 
-    if ($dest_pdo->inTransaction()) {
-        $dest_pdo->commit();
-    }
-    fclose($handle);
+        if ($dest_pdo->inTransaction()) {
+            $dest_pdo->commit();
+        }
 
-    // 5. ARCHIVE THE LOG (So we don't double-process)
-    rename($log_file, $log_file . '.processed');
-    echo "\n--- Emergency Ingestion Complete. Log archived. --- \n";
+        fclose($handle);
+
+        rename($in_progress_file, $in_progress_file . '.processed');
+        log_msg('INFO', "Done: $log_file. Ingested=$count Skipped=$skipped. Archived.");
+    }
 
 } catch (PDOException $e) {
-    die("DESTINATION STILL UNREACHABLE: " . $e->getMessage());
+    log_msg('CRITICAL', "Destination unreachable: " . $e->getMessage());
+    exit(1);
+} finally {
+    flock($lock_handle, LOCK_UN);
+    fclose($lock_handle);
+    @unlink($lock_file);
 }
