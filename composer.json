@@ -3,6 +3,7 @@
     "description": "Sentinel Sync Engine",
     "type": "project",
     "require": {
+        "php": ">=8.1",
         "vlucas/phpdotenv": "^5.6"
     }
 }

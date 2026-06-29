@@ -1,15 +1,21 @@
 <?php
-// Load Composer autoloader
 require_once dirname(__DIR__) . '/vendor/autoload.php';
 
-// Load environment variables from .env file
 $dotenv = Dotenv\Dotenv::createImmutable(dirname(__DIR__));
-$dotenv->safeLoad(); // safeLoad won't throw exception if .env is missing (e.g. in prod using actual env vars)
+$dotenv->safeLoad();
 
-define('DB_HOST', isset($_ENV['DB_HOST']) ? $_ENV['DB_HOST'] : (getenv('DB_HOST') !== false ? getenv('DB_HOST') : '127.0.0.1'));
-define('DB_PORT', isset($_ENV['DB_PORT']) ? $_ENV['DB_PORT'] : (getenv('DB_PORT') !== false ? getenv('DB_PORT') : '10016'));
-define('DB_USER', isset($_ENV['DB_USER']) ? $_ENV['DB_USER'] : (getenv('DB_USER') !== false ? getenv('DB_USER') : 'root'));
-define('DB_PASS', isset($_ENV['DB_PASS']) ? $_ENV['DB_PASS'] : (getenv('DB_PASS') !== false ? getenv('DB_PASS') : 'root'));
+// Require credentials, never fall back to hardcoded values.
+// Set these in .env (local) or as real environment variables (production).
+$dotenv->required(['DB_HOST', 'DB_USER', 'DB_PASS', 'DB_SOURCE', 'DB_DEST']);
 
-define('DB_SOURCE', isset($_ENV['DB_SOURCE']) ? $_ENV['DB_SOURCE'] : (getenv('DB_SOURCE') !== false ? getenv('DB_SOURCE') : 'wp_source_db'));
-define('DB_DEST',   isset($_ENV['DB_DEST'])   ? $_ENV['DB_DEST']   : (getenv('DB_DEST')   !== false ? getenv('DB_DEST')   : 'accounting_dest_db'));
+function env(string $key, string $default = ''): string {
+    $value = $_ENV[$key] ?? getenv($key);
+    return ($value !== false && $value !== null) ? (string)$value : $default;
+}
+
+define('DB_HOST',   env('DB_HOST',   '127.0.0.1'));
+define('DB_PORT',   env('DB_PORT',   '3306'));
+define('DB_USER',   env('DB_USER'));
+define('DB_PASS',   env('DB_PASS'));
+define('DB_SOURCE', env('DB_SOURCE'));
+define('DB_DEST',   env('DB_DEST'));

@@ -8,24 +8,27 @@ USE wp_source_db;
 
 -- Table: Raw donations as they arrive from the frontend
 CREATE TABLE IF NOT EXISTS wp_donations (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    donor_email VARCHAR(255) NOT NULL,
-    amount_kobo INT NOT NULL, -- Stored as integers to prevent rounding errors
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    id          INT AUTO_INCREMENT PRIMARY KEY,
+    donor_email VARCHAR(254) NOT NULL,
+    amount_kobo INT UNSIGNED NOT NULL,  -- Unsigned: negatives are invalid
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
 -- Table: The Dead Letter Queue (DLQ)
--- This captures failed sync attempts for later recovery.
+-- Payload stores the full error envelope: {data, error, timestamp}
+-- quarantined = 1 means the record exceeded MAX_ATTEMPTS and needs human review
 CREATE TABLE IF NOT EXISTS sync_dead_letter_queue (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    payload JSON NOT NULL, -- Captures the entire data object at the time of failure
+    id           INT AUTO_INCREMENT PRIMARY KEY,
+    payload      JSON NOT NULL,
     error_message TEXT,
-    attempts INT DEFAULT 0,
-    last_attempt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    attempts     INT UNSIGNED DEFAULT 0,
+    quarantined  TINYINT(1) NOT NULL DEFAULT 0,
+    last_attempt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_recoverable (quarantined, attempts)
 ) ENGINE=InnoDB;
 
 -- Seed Data for testing
-INSERT INTO wp_donations (donor_email, amount_kobo) VALUES 
-('awesome@example.com', 5000), 
+INSERT INTO wp_donations (donor_email, amount_kobo) VALUES
+('awesome@example.com', 5000),
 ('hawesome@example.com', 12500),
 ('failure_test@example.com', 7500);
