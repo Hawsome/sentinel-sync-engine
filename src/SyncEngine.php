@@ -121,7 +121,7 @@ try {
                     FILE_APPEND
                 );
                 if ($written === false) {
-                    log_msg('CRITICAL', "Disk write FAILED for ID {$row['id']} — check disk space and permissions.");
+                    log_msg('CRITICAL', "Disk write FAILED for ID {$row['id']}. Check disk space and permissions.");
                 } else {
                     $total_emergency++;
                     log_msg('WARN', "ID {$row['id']} written to emergency log (DB dead): " . $db_error->getMessage());

@@ -70,7 +70,7 @@ try {
         $data = isset($envelope['data']) ? $envelope['data'] : $envelope;
 
         if (empty($data['id']) || empty($data['amount_kobo']) || empty($data['donor_email'])) {
-            log_msg('WARN', "DLQ id=$queue_id has malformed payload — quarantining.");
+            log_msg('WARN', "DLQ id=$queue_id has malformed payload --quarantining.");
             $quarantine_stmt->execute([':id' => $queue_id]);
             $total_quarantined++;
             continue;

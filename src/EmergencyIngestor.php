@@ -2,7 +2,7 @@
 require_once 'config.php';
 require_once 'helpers.php';
 
-// Scan ALL unprocessed emergency logs, not just today's — prevents date-boundary data loss
+// Scan ALL unprocessed emergency logs, not just today's --prevents date-boundary data loss
 $log_dir   = __DIR__ . '/../logs';
 $log_files = glob($log_dir . '/emergency_sync_*.json');
 
@@ -30,10 +30,10 @@ try {
     foreach ($log_files as $log_file) {
         log_msg('INFO', "Processing: $log_file");
 
-        // Rename BEFORE processing — prevents re-processing if we crash mid-file
+        // Rename BEFORE processing. Prevents re-processing if we crash mid-file.
         $in_progress_file = $log_file . '.inprogress';
         if (!rename($log_file, $in_progress_file)) {
-            log_msg('ERROR', "Could not rename $log_file — skipping to avoid double-processing.");
+            log_msg('ERROR', "Could not rename $log_file --skipping to avoid double-processing.");
             continue;
         }
 
@@ -92,7 +92,7 @@ try {
         fclose($handle);
 
         rename($in_progress_file, $in_progress_file . '.processed');
-        log_msg('INFO', "Done: $log_file — Ingested=$count Skipped=$skipped. Archived.");
+        log_msg('INFO', "Done: $log_file --Ingested=$count Skipped=$skipped. Archived.");
     }
 
 } catch (PDOException $e) {
