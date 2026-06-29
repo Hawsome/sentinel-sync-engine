@@ -2,7 +2,10 @@
 require_once 'config.php';
 require_once 'helpers.php';
 
-// Scan ALL unprocessed emergency logs, not just today's --prevents date-boundary data loss
+// Scan ALL unprocessed emergency logs, not just today's. Prevents date-boundary data loss.
+if (!file_exists(__DIR__ . '/../logs')) {
+    mkdir(__DIR__ . '/../logs', 0750, true);
+}
 $log_dir   = __DIR__ . '/../logs';
 $log_files = glob($log_dir . '/emergency_sync_*.json');
 
@@ -10,6 +13,15 @@ if (empty($log_files)) {
     log_msg('INFO', "No unprocessed emergency logs found.");
     exit(0);
 }
+
+// Atomic lock prevents two concurrent ingestor instances from racing across log files.
+$lock_file   = $log_dir . '/emergency.lock';
+$lock_handle = fopen($lock_file, 'c');
+if (!$lock_handle || !flock($lock_handle, LOCK_EX | LOCK_NB)) {
+    die("Emergency ingestor is already running.\n");
+}
+ftruncate($lock_handle, 0);
+fwrite($lock_handle, (string)getmypid());
 
 try {
     $dest_pdo = new PDO(
@@ -33,7 +45,7 @@ try {
         // Rename BEFORE processing. Prevents re-processing if we crash mid-file.
         $in_progress_file = $log_file . '.inprogress';
         if (!rename($log_file, $in_progress_file)) {
-            log_msg('ERROR', "Could not rename $log_file --skipping to avoid double-processing.");
+            log_msg('ERROR', "Could not rename $log_file. Skipping to avoid double-processing.");
             continue;
         }
 
@@ -92,10 +104,14 @@ try {
         fclose($handle);
 
         rename($in_progress_file, $in_progress_file . '.processed');
-        log_msg('INFO', "Done: $log_file --Ingested=$count Skipped=$skipped. Archived.");
+        log_msg('INFO', "Done: $log_file. Ingested=$count Skipped=$skipped. Archived.");
     }
 
 } catch (PDOException $e) {
     log_msg('CRITICAL', "Destination unreachable: " . $e->getMessage());
     exit(1);
+} finally {
+    flock($lock_handle, LOCK_UN);
+    fclose($lock_handle);
+    @unlink($lock_file);
 }

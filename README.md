@@ -1,9 +1,9 @@
 # Sentinel Sync Engine
 **A Fault-Tolerant, Idempotent Data Pipeline for Mission-Critical Systems**
 
-[![Tech Stack](https://img.shields.io/badge/Stack-PHP%20|%20MySQL%20|%20PDO-blue)](https://github.com/hawesome)
+[![Tech Stack](https://img.shields.io/badge/Stack-PHP%20|%20MySQL%20|%20PDO-blue)](https://github.com/Hawsome)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/hawesome)
+[![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/Hawsome)
 [![PHP Lint & Syntax Check](https://github.com/Hawsome/sentinel-sync-engine/actions/workflows/php-check.yml/badge.svg)](https://github.com/Hawsome/sentinel-sync-engine/actions/workflows/php-check.yml)
 
 ## The Problem
@@ -38,9 +38,9 @@ graph TD
 
 | Tier | Trigger | Mechanism |
 |------|---------|-----------|
-| **1 — Primary Sync** | Normal operation | Stream rows from source → batch-insert to destination |
-| **2 — Dead Letter Queue** | Row-level insert failure | Serialise failed payload as JSON into `sync_dead_letter_queue` on source DB |
-| **3 — Emergency Log** | Source DB also unreachable | Append payload to a local JSON log file for later ingestion |
+| **1 - Primary Sync** | Normal operation | Stream rows from source → batch-insert to destination |
+| **2 - Dead Letter Queue** | Row-level insert failure | Serialise failed payload as JSON into `sync_dead_letter_queue` on source DB |
+| **3 - Emergency Log** | Source DB also unreachable | Append payload to a local JSON log file for later ingestion |
 
 ## Key Engineering Features
 *   **Financial Precision:** Stores currency as integers (kobos) in source/transit to avoid floating-point rounding errors, only converting to `DECIMAL(10,2)` at the final destination.
@@ -91,7 +91,7 @@ DB_PASS=your_db_password
 DB_SOURCE=wp_source_db
 DB_DEST=accounting_dest_db
 ```
-All six variables are required. The engine will throw a clear error at startup if any are missing.
+`DB_PORT` is optional and defaults to `3306` if not set. All other five variables are required. The engine will throw a clear error at startup if any are missing.
 
 ### 4. Execution
 Run the primary sync engine:

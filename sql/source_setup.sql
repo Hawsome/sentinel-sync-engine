@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS sync_dead_letter_queue (
     error_message TEXT,
     attempts     INT UNSIGNED DEFAULT 0,
     quarantined  TINYINT(1) NOT NULL DEFAULT 0,
-    last_attempt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    last_attempt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, -- auto-updated by MySQL on every attempt; useful for ops monitoring and manual audits
     INDEX idx_recoverable (quarantined, attempts)
 ) ENGINE=InnoDB;
 

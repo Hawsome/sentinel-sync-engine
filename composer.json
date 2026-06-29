@@ -1,5 +1,5 @@
 {
-    "name": "haw/sentinel-sync-engine",
+    "name": "hawsome/sentinel-sync-engine",
     "description": "Sentinel Sync Engine",
     "type": "project",
     "require": {
