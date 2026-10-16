@@ -25,6 +25,16 @@ define('DB_DEST',   env('DB_DEST'));
 define('DB_SOURCE_HOST', env('DB_SOURCE_HOST', DB_HOST));
 define('DB_DEST_HOST',   env('DB_DEST_HOST',   DB_HOST));
 
+// Seconds a source row must sit unchanged before the sync reads it. Must exceed
+// the longest write transaction on the source. See run_sync().
+function sync_lag_seconds(): int {
+    $lag = filter_var(env('SYNC_LAG_SECONDS', '60'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]);
+    if ($lag === false) {
+        throw new InvalidArgumentException('SYNC_LAG_SECONDS must be a non-negative integer');
+    }
+    return $lag;
+}
+
 function connect_source(): PDO {
     return connect(DB_SOURCE_HOST, DB_PORT, DB_SOURCE, DB_USER, DB_PASS);
 }

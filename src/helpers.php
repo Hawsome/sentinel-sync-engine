@@ -6,6 +6,7 @@ const BATCH_SIZE       = 500;
 const MAX_ATTEMPTS     = 5;
 const MAX_EMAIL_LENGTH = 254;
 const MAX_AMOUNT_KOBO  = 4294967295; // INT UNSIGNED ceiling of wp_donations.amount_kobo
+const DONATION_STATUSES = ['completed', 'refunded'];
 const LOG_DIR          = __DIR__ . '/../logs';
 
 // MySQL driver codes that mean "the connection or transaction is gone, try the
@@ -24,12 +25,17 @@ function log_msg(string $level, string $message): void {
 }
 
 function connect(string $host, string $port, string $dbname, string $user, string $pass): PDO {
-    return new PDO(
+    $pdo = new PDO(
         "mysql:host=$host;port=$port;dbname=$dbname;charset=utf8mb4",
         $user,
         $pass,
         [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]
     );
+    // The cursor timestamp is read from the destination and compared on the
+    // source. MySQL renders TIMESTAMP values in the session time zone, so two
+    // servers with different defaults would shift every comparison by hours.
+    $pdo->exec("SET time_zone = '+00:00'");
+    return $pdo;
 }
 
 /**
@@ -92,6 +98,15 @@ function validate_row(array $row): ?string {
     if (strlen($email) > MAX_EMAIL_LENGTH) {
         return 'donor_email exceeds maximum length';
     }
+    // Both optional so dead letters written before these columns existed still replay.
+    if (isset($row['status']) && !in_array($row['status'], DONATION_STATUSES, true)) {
+        return 'Invalid status (must be one of: ' . implode(', ', DONATION_STATUSES) . ')';
+    }
+    if (isset($row['updated_at'])
+        && (!is_string($row['updated_at'])
+            || !preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,6})?$/', $row['updated_at']))) {
+        return 'Invalid updated_at (expected Y-m-d H:i:s[.u])';
+    }
     return null;
 }
 
@@ -103,15 +118,39 @@ function kobo_to_naira(int $kobo): string {
     return sprintf('%d.%02d', intdiv($kobo, 100), $kobo % 100);
 }
 
+/**
+ * Insert, or update only if the incoming row is at least as new as the stored one.
+ *
+ * The guard is what makes late replays safe now that source rows change: a dead
+ * letter parked an hour ago must not overwrite the refund that synced since.
+ *
+ * Unversioned rows (NULL source_updated_at, from before versioning) behave as
+ * the oldest possible version: they fill an empty slot, accept any update, and
+ * never overwrite a versioned row. In SQL terms, "NULL >= x" is NULL, which
+ * IF() treats as false, so the stored value is kept.
+ */
 function prepare_upsert(PDO $dest, string $insert_status, string $update_status): PDOStatement {
+    $fresh = "(source_updated_at IS NULL OR VALUES(source_updated_at) >= source_updated_at)";
+
+    // The MySQL manual says single-table assignments are "generally evaluated
+    // from left to right", and a later one sees a column's new value. That is
+    // a tendency, not a promise, so this statement must not depend on order.
+    // It doesn't: source_updated_at carries the same guard as the rest, so it
+    // only changes when the row is fresh, and then "new >= new" is still true.
+    // An unguarded "source_updated_at = VALUES(source_updated_at)" evaluated
+    // first would make every later IF() true and silently defeat the guard.
+    // It goes last anyway, for the next reader.
     $stmt = $dest->prepare(
-        "INSERT INTO synced_donations (remote_id, email, amount_naira, sync_status)
-         VALUES (:remote_id, :email, :amount, :insert_status)
+        "INSERT INTO synced_donations
+             (remote_id, email, amount_naira, donation_status, source_updated_at, sync_status)
+         VALUES (:remote_id, :email, :amount, :donation_status, :source_updated_at, :insert_status)
          ON DUPLICATE KEY UPDATE
-             email        = VALUES(email),
-             amount_naira = VALUES(amount_naira),
-             sync_status  = :update_status,
-             processed_at = CURRENT_TIMESTAMP"
+             email             = IF($fresh, VALUES(email), email),
+             amount_naira      = IF($fresh, VALUES(amount_naira), amount_naira),
+             donation_status   = IF($fresh, VALUES(donation_status), donation_status),
+             sync_status       = IF($fresh, :update_status, sync_status),
+             processed_at      = IF($fresh, CURRENT_TIMESTAMP, processed_at),
+             source_updated_at = IF($fresh, VALUES(source_updated_at), source_updated_at)"
     );
     $stmt->bindValue(':insert_status', $insert_status);
     $stmt->bindValue(':update_status', $update_status);
@@ -127,5 +166,7 @@ function upsert_donation(PDOStatement $stmt, array $row): void {
     $stmt->bindValue(':remote_id', (int)$row['id'], PDO::PARAM_INT);
     $stmt->bindValue(':email', (string)$row['donor_email']);
     $stmt->bindValue(':amount', kobo_to_naira((int)$row['amount_kobo']));
+    $stmt->bindValue(':donation_status', (string)($row['status'] ?? 'completed'));
+    $stmt->bindValue(':source_updated_at', $row['updated_at'] ?? null, isset($row['updated_at']) ? PDO::PARAM_STR : PDO::PARAM_NULL);
     $stmt->execute();
 }

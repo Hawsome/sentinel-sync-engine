@@ -11,7 +11,13 @@ CREATE TABLE IF NOT EXISTS wp_donations (
     id          INT AUTO_INCREMENT PRIMARY KEY,
     donor_email VARCHAR(254) NOT NULL,
     amount_kobo INT UNSIGNED NOT NULL,  -- Unsigned: negatives are invalid
-    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+    status      VARCHAR(20) NOT NULL DEFAULT 'completed', -- completed or refunded. Refunds are marked, never deleted.
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    -- The sync cursor. TIMESTAMP (stored as UTC) rather than DATETIME, so the engine and
+    -- the CMS agree on "now" whatever session time zone each connects with. Microseconds
+    -- keep ties rare and the id breaks the ones that remain.
+    updated_at  TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    INDEX idx_sync_cursor (updated_at, id)
 ) ENGINE=InnoDB;
 
 -- Table: The Dead Letter Queue (DLQ)

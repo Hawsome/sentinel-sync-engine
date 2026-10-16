@@ -2,11 +2,73 @@
 
 final class RecoveryAndIngestTest extends DatabaseTestCase
 {
-    private function parkRow(int $id, string $email, int $kobo): void
+    /** @param array<string, string> $extra e.g. status, updated_at */
+    private function parkRow(int $id, string $email, int $kobo, array $extra = []): void
     {
-        $payload = json_encode(['data' => ['id' => $id, 'donor_email' => $email, 'amount_kobo' => $kobo]]);
+        $payload = json_encode(['data' => ['id' => $id, 'donor_email' => $email, 'amount_kobo' => $kobo] + $extra]);
         $this->source->prepare('INSERT INTO sync_dead_letter_queue (payload, error_message) VALUES (:p, :e)')
             ->execute([':p' => $payload, ':e' => 'seeded by test']);
+    }
+
+    /** @param array<string, mixed> $row */
+    private function seedDestination(array $row): void
+    {
+        upsert_donation(prepare_upsert($this->dest, 'SUCCESS', 'UPDATED'), $row);
+    }
+
+    /** Regression: a late replay of an old snapshot used to overwrite newer data. */
+    public function testStaleDeadLetterDoesNotOverwriteNewerRow(): void
+    {
+        $this->seedDestination([
+            'id' => 42, 'donor_email' => 'a@example.com', 'amount_kobo' => 5000,
+            'status' => 'refunded', 'updated_at' => '2026-03-01 12:00:00.000000',
+        ]);
+        $this->parkRow(42, 'a@example.com', 5000, ['status' => 'completed', 'updated_at' => '2026-02-01 12:00:00.000000']);
+
+        $stats = run_recovery($this->source, $this->dest);
+
+        $this->assertSame(1, $stats['recovered'], 'an obsolete snapshot is resolved, not retried');
+        $this->assertSame(
+            ['donation_status' => 'refunded', 'sync_status' => 'SUCCESS'],
+            $this->row($this->dest, 'SELECT donation_status, sync_status FROM synced_donations WHERE remote_id = 42')
+        );
+    }
+
+    public function testNewerDeadLetterDoesOverwrite(): void
+    {
+        $this->seedDestination([
+            'id' => 42, 'donor_email' => 'a@example.com', 'amount_kobo' => 5000,
+            'status' => 'completed', 'updated_at' => '2026-02-01 12:00:00.000000',
+        ]);
+        $this->parkRow(42, 'a@example.com', 5000, ['status' => 'refunded', 'updated_at' => '2026-03-01 12:00:00.000000']);
+
+        run_recovery($this->source, $this->dest);
+
+        $this->assertSame('refunded', $this->scalar($this->dest, 'SELECT donation_status FROM synced_donations WHERE remote_id = 42'));
+    }
+
+    /** Dead letters written before versioning carry no updated_at; they must not clobber versioned rows. */
+    public function testUnversionedDeadLetterDoesNotOverwriteVersionedRow(): void
+    {
+        $this->seedDestination([
+            'id' => 42, 'donor_email' => 'new@example.com', 'amount_kobo' => 5000,
+            'status' => 'refunded', 'updated_at' => '2026-03-01 12:00:00.000000',
+        ]);
+        $this->parkRow(42, 'old@example.com', 5000);
+
+        run_recovery($this->source, $this->dest);
+
+        $this->assertSame('new@example.com', $this->scalar($this->dest, 'SELECT email FROM synced_donations WHERE remote_id = 42'));
+    }
+
+    public function testVersionedRowReplacesUnversionedRow(): void
+    {
+        $this->seedDestination(['id' => 42, 'donor_email' => 'old@example.com', 'amount_kobo' => 5000]);
+        $this->parkRow(42, 'new@example.com', 5000, ['updated_at' => '2026-03-01 12:00:00.000000']);
+
+        run_recovery($this->source, $this->dest);
+
+        $this->assertSame('new@example.com', $this->scalar($this->dest, 'SELECT email FROM synced_donations WHERE remote_id = 42'));
     }
 
     public function testRecoveryReplaysAndDeletesDeadLetters(): void

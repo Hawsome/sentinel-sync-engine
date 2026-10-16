@@ -11,16 +11,19 @@ CREATE TABLE IF NOT EXISTS synced_donations (
     remote_id    INT UNSIGNED UNIQUE NOT NULL,
     email        VARCHAR(254) NOT NULL,
     amount_naira DECIMAL(10, 2) UNSIGNED NOT NULL,
+    donation_status   VARCHAR(20) NOT NULL DEFAULT 'completed',
+    -- Version of the source row this reflects. Older snapshots never overwrite newer ones.
+    source_updated_at TIMESTAMP(6) NULL DEFAULT NULL,
     sync_status  VARCHAR(50),
     processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_donor_email (email)
 ) ENGINE=InnoDB;
 
--- Persistent cursor: tracks the last successfully synced ID per engine.
--- Safer than MAX(remote_id) which can skip rows if source has gaps or reorders.
+-- Persistent cursor: the (updated_at, id) of the last source row each engine has handled.
 CREATE TABLE IF NOT EXISTS sync_cursor (
     engine          VARCHAR(50) PRIMARY KEY,
-    last_synced_id  INT UNSIGNED NOT NULL DEFAULT 0,
+    last_updated_at TIMESTAMP(6) NOT NULL DEFAULT '2000-01-01 00:00:00.000000',
+    last_synced_id  INT UNSIGNED NOT NULL DEFAULT 0, -- tie-breaker within last_updated_at
     updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
@@ -37,6 +40,7 @@ CREATE TABLE IF NOT EXISTS sync_audit_log (
     rows_emergency   INT UNSIGNED NOT NULL DEFAULT 0,
     duration_seconds DECIMAL(8, 2),
     cursor_end       INT UNSIGNED,
+    cursor_end_at    TIMESTAMP(6) NULL DEFAULT NULL,
     error_message    TEXT NULL,
     created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;

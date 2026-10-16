@@ -20,16 +20,16 @@ try {
     exit(1);
 }
 
-$stats    = run_sync($source_pdo, $dest_pdo, LOG_DIR);
+$stats    = run_sync($source_pdo, $dest_pdo, LOG_DIR, sync_lag_seconds());
 $duration = microtime(true) - $run_start;
 write_audit($dest_pdo, $stats, $duration);
 
 log_msg(
     $stats['status'] === 'COMPLETED' ? 'INFO' : 'ERROR',
     sprintf(
-        "Run %s. Synced=%d Failed=%d DLQ=%d Emergency=%d Cursor=%d Duration=%.2fs",
+        "Run %s. Synced=%d Failed=%d DLQ=%d Emergency=%d Cursor=(%s, %d) Duration=%.2fs",
         strtolower($stats['status']), $stats['synced'], $stats['failed'],
-        $stats['dlq'], $stats['emergency'], $stats['cursor'], $duration
+        $stats['dlq'], $stats['emergency'], $stats['cursor_at'] ?? '-', $stats['cursor'], $duration
     )
 );
 

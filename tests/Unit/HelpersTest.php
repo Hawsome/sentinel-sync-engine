@@ -28,6 +28,13 @@ final class HelpersTest extends TestCase
     {
         $this->assertNull(validate_row(['id' => 7, 'amount_kobo' => 5000, 'donor_email' => 'a@example.com']));
         $this->assertNull(validate_row(['id' => '7', 'amount_kobo' => '5000', 'donor_email' => 'a@example.com']));
+        $this->assertNull(validate_row([
+            'id' => 7, 'amount_kobo' => 5000, 'donor_email' => 'a@example.com',
+            'status' => 'refunded', 'updated_at' => '2026-03-01 12:00:00.123456',
+        ]));
+        $this->assertNull(validate_row([
+            'id' => 7, 'amount_kobo' => 5000, 'donor_email' => 'a@example.com', 'updated_at' => '2026-03-01 12:00:00',
+        ]));
     }
 
     /** @return array<string, array{0:array<string, mixed>}> */
@@ -43,6 +50,10 @@ final class HelpersTest extends TestCase
             'amount over column' => [['amount_kobo' => MAX_AMOUNT_KOBO + 1] + $ok],
             'bad email'          => [['donor_email' => 'not-an-email'] + $ok],
             'email not a string' => [['donor_email' => ['a@example.com']] + $ok],
+            'unknown status'     => [['status' => 'chargeback'] + $ok],
+            'status not a string' => [['status' => 1] + $ok],
+            'updated_at garbage' => [['updated_at' => 'yesterday'] + $ok],
+            'updated_at too precise' => [['updated_at' => '2026-03-01 12:00:00.1234567'] + $ok],
             'email too long'     => [['donor_email' => str_repeat('a', 64) . '@' . str_repeat('b', 63) . '.' . str_repeat('c', 63) . '.' . str_repeat('d', 63) . '.com'] + $ok],
         ];
     }

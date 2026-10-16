@@ -17,9 +17,10 @@ In high-stakes environments, particularly for nonprofits and mission-driven orga
 ## The Solution
 Sentinel is a PHP-based synchronisation engine designed with a **"Failure-First"** mentality. It moves data from a Source (CMS) to a Destination (Relational DB) under one rule: **the cursor never moves past a row until that row is in the destination or recorded somewhere a worker or a human will find it.**
 1.  **No Silent Loss:** Failed rows go to a **Dead Letter Queue (DLQ)**. If the DLQ is down, they go to a local emergency log. If that fails too, the batch rolls back and the cursor holds. Invalid rows are quarantined for review, not logged and forgotten.
-2.  **Idempotency & State Tracking:** A persistent `sync_cursor` table commits in the same transaction as each batch of rows, and a unique constraint on `remote_id` makes every retry safe.
-3.  **Self-Healing:** A **Recovery Worker** replays the DLQ. Rows that keep failing are quarantined after 5 attempts; an outage does not count as an attempt.
-4.  **Concurrency Safety:** `flock` stops overlapping cron jobs on one host. A `FOR UPDATE` lock on the cursor row serialises engines across hosts.
+2.  **Inserts, Edits and Refunds:** The cursor follows each row's `updated_at`, so a refund or a corrected amount syncs the same way a new donation does.
+3.  **Idempotency & State Tracking:** A persistent `sync_cursor` table commits in the same transaction as each batch of rows. A unique constraint on `remote_id` makes every retry safe, and a version check stops a late replay from overwriting newer data.
+4.  **Self-Healing:** A **Recovery Worker** replays the DLQ. Rows that keep failing are quarantined after 5 attempts; an outage does not count as an attempt.
+5.  **Concurrency Safety:** `flock` stops overlapping cron jobs on one host. A `FOR UPDATE` lock on the cursor row serialises engines across hosts.
 
 ## Architecture Flow
 ```mermaid
@@ -46,16 +47,20 @@ A **transient** failure (deadlock, lost connection) is not a row failure. The en
 
 ## Key Engineering Features
 *   **Financial Precision:** Currency stays as integer kobo until the final write. `kobo_to_naira()` builds the `DECIMAL(10,2)` value with integer arithmetic, so no float ever touches an amount.
-*   **Bounded Memory:** `pdo_mysql` buffers whole result sets by default, so an unbounded `SELECT` loads every row into PHP. Sentinel reads 500-row pages with keyset pagination (`WHERE id > :cursor ORDER BY id LIMIT 500`), which also stays fast on deep pages where `OFFSET` would not.
+*   **Bounded Memory:** `pdo_mysql` buffers whole result sets by default, so an unbounded `SELECT` loads every row into PHP. Sentinel reads 500-row pages with keyset pagination on `(updated_at, id)`, which also stays fast on deep pages where `OFFSET` would not.
+*   **Commit-Lag Safety:** A row is stamped when its statement runs but becomes visible when its transaction commits, so a slow transaction can land a row behind the cursor. Sentinel only reads rows older than `SYNC_LAG_SECONDS` (default 60), measured on the source server's clock.
 *   **Failure Classification:** Deadlocks and dropped connections abort the page; constraint and data errors go to the DLQ. Treating a deadlock as a row error would silently lose the rows MySQL rolled back with it.
-*   **Data Validation:** Every row is validated (positive integer amount within column range, RFC 5321 email format) before any database write.
-*   **Security:** PDO prepared statements eliminate SQL injection. Explicit column selects (`id, donor_email, amount_kobo`) prevent future source-schema columns from leaking into the destination or DLQ payloads. Credentials are required via `.env`, with no hardcoded fallback values.
+*   **Data Validation:** Every row is validated (positive integer amount within column range, RFC 5321 email format, known status) before any database write.
+*   **Security:** PDO prepared statements eliminate SQL injection. Explicit column selects prevent future source-schema columns from leaking into the destination or DLQ payloads. Credentials are required via `.env`, with no hardcoded fallback values.
 *   **Audit Trail:** Every sync run, including aborted ones, writes a row to `sync_audit_log` with its status, row counts, duration, final cursor and error.
 *   **Honest Exit Codes:** `0` for a clean run, `1` for any failure, so cron wrappers and monitors see what happened.
 *   **Tested Against Real Failures:** PHPUnit integration tests run against MySQL in CI and use triggers to force deadlocks, rejections and DLQ outages. See [docs/testing.md](docs/testing.md).
 
 ## Technical Decisions
 *   **Why a `sync_cursor` table instead of `MAX(remote_id)`?** A cursor stored explicitly in the destination advances past rows that went to the DLQ. `MAX(remote_id)` cannot tell "synced" from "parked for recovery", and committing the cursor with each page makes progress crash-safe.
+*   **Why `(updated_at, id)` and not just `updated_at`?** One statement can stamp a thousand rows with the same microsecond. A timestamp-only cursor either loops on that tie or skips past it; the `id` makes every position unique.
+*   **Why mark refunds instead of deleting rows?** A deleted row leaves nothing for a cursor to find. A status change bumps `updated_at` and syncs like any other edit, and accounting wants the history anyway.
+*   **Why store `source_updated_at` in the destination?** It lets the upsert ignore anything older than what it already has. Without it, a dead letter replayed an hour late would undo a refund.
 *   **Why JSON for the DLQ?** Storing failed payloads as JSON decouples the recovery process from the source schema. If the source table changes, the Recovery Worker still has the original data snapshot as it existed at the time of failure.
 *   **Why `flock` instead of `file_exists` + `file_put_contents`?** The `file_exists` check followed by a write is a classic TOCTOU race condition: two processes can both pass the check before either writes. `flock(LOCK_EX | LOCK_NB)` is atomic and the OS releases the lock automatically if the process dies. The lock file is never deleted, because unlinking it reopens the same race through a different door.
 *   **Why does an outage not count as a recovery attempt?** Records are quarantined after `MAX_ATTEMPTS` (5) row-level failures. If outages counted, five recovery runs while the destination was down would quarantine every healthy record in the queue.
@@ -63,8 +68,9 @@ A **transient** failure (deadlock, lost connection) is not a row failure. The en
 *   **Why PHP/PDO?** PDO (PHP Data Objects) keeps the database layer portable. The SQL is MySQL-flavoured (`ON DUPLICATE KEY UPDATE`), so a PostgreSQL port would mean rewriting the upserts as `ON CONFLICT`.
 
 ## Known Limitations
-*   **Insert-only.** The cursor tracks `id`, so edits and refunds to already-synced source rows never reach the destination.
-*   **Recovery replays snapshots.** A dead letter can overwrite newer data if the same row was re-synced before the DLQ drained.
+*   **Hard deletes don't sync.** Refunds and cancellations must be status changes.
+*   **The lag window is a bound, not a proof.** A source transaction that runs longer than `SYNC_LAG_SECONDS` can still commit a row behind the cursor.
+*   **`TIMESTAMP` ends in 2038.** `updated_at` will need to move to `DATETIME(6)` before then.
 
 Details and possible fixes are in [docs/architecture.md](docs/architecture.md#known-limitations).
 
@@ -81,7 +87,7 @@ Run the SQL scripts provided in the `/sql` directory:
 mysql -u your_db_user -p < sql/source_setup.sql
 mysql -u your_db_user -p < sql/destination_setup.sql
 ```
-Upgrading an existing install? Apply `sql/migrations/001_audit_status.sql` to add the audit status columns.
+Upgrading an existing install? Apply the scripts in `sql/migrations/` in order. `002_sync_updates.sql` resets the cursor, so the next sync re-reads every row once; the upsert makes that harmless.
 
 ### 2. Install Dependencies
 ```bash
@@ -101,7 +107,7 @@ DB_PASS=your_db_password
 DB_SOURCE=wp_source_db
 DB_DEST=accounting_dest_db
 ```
-`DB_HOST`, `DB_USER`, `DB_PASS`, `DB_SOURCE` and `DB_DEST` are required; the engine throws a clear error at startup if any are missing. `DB_PORT` defaults to `3306`. Set `DB_SOURCE_HOST` and `DB_DEST_HOST` to put the databases on separate servers; both default to `DB_HOST`.
+`DB_HOST`, `DB_USER`, `DB_PASS`, `DB_SOURCE` and `DB_DEST` are required; the engine throws a clear error at startup if any are missing. `DB_PORT` defaults to `3306`. Set `DB_SOURCE_HOST` and `DB_DEST_HOST` to put the databases on separate servers; both default to `DB_HOST`. `SYNC_LAG_SECONDS` (default `60`) must exceed the longest write transaction on the source.
 
 ### 4. Execution
 Run the primary sync engine:
@@ -139,7 +145,6 @@ Integration tests need a MySQL server; see [docs/testing.md](docs/testing.md).
 ```
 
 ## Future Roadmap
-- [ ] Sync edits as well as inserts, using an `(updated_at, id)` cursor.
 - [ ] Add **Slack/Email Notifications** for DLQ alerts and quarantine events.
 - [ ] Develop a Web UI to monitor sync health, cursor position, and audit log in real time.
 - [ ] Trip a circuit breaker on a high *row-level* failure rate (transient failures already abort the run).

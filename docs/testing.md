@@ -33,7 +33,7 @@ The tests do not mock PDO. They make MySQL itself fail, using triggers:
 | Behaviour | Test |
 |-----------|------|
 | Kobo to naira is exact, up to the `INT UNSIGNED` ceiling | `testKoboToNairaIsExact` |
-| Validation rejects fractional, exponent, negative and oversized amounts, and bad or oversized emails | `testInvalidRowsAreRejected` |
+| Validation rejects fractional, exponent, negative and oversized amounts, bad or oversized emails, unknown statuses and malformed timestamps | `testInvalidRowsAreRejected` |
 | Deadlocks and dropped connections count as transient; constraint errors do not | `testTransientErrorClassification` |
 | The lock is exclusive, and the lock file survives release | `testLockIsExclusiveAndFileSurvivesRelease` |
 
@@ -42,7 +42,11 @@ The tests do not mock PDO. They make MySQL itself fail, using triggers:
 |-----------|------|
 | Rows land with exact amounts; cursor advances | `testSyncsRowsWithExactAmountsAndAdvancesCursor` |
 | A second run does nothing | `testSecondRunIsANoOp` |
-| More rows than one page are all synced | `testPagesThroughMoreRowsThanOneBatch` |
+| Pages cross ties on `updated_at` without looping or skipping | `testPagesThroughTiesOnUpdatedAt` |
+| A refund to an already-synced row reaches the destination | `testRefundPropagatesToDestination` |
+| An edited amount reaches the destination | `testEditToAmountPropagates` |
+| Rows inside the lag window wait; older rows sync | `testLagWindowHoldsBackRecentRows` |
+| An unknown status is quarantined | `testInvalidStatusIsQuarantined` |
 | An invalid row is quarantined in the DLQ, not lost behind the cursor | `testInvalidRowIsQuarantinedNotLost` |
 | A row-level destination failure goes to the DLQ for retry | `testRowLevelDestinationFailureGoesToDlqForRetry` |
 | A transient failure rolls back the page and holds the cursor | `testTransientFailureAbortsWithoutAdvancingCursor` |
@@ -57,6 +61,10 @@ The tests do not mock PDO. They make MySQL itself fail, using triggers:
 | Row failures count attempts, then quarantine | `testRowFailureCountsAttemptsThenQuarantines` |
 | An outage does not burn attempts | `testTransientFailureDoesNotBurnAttempts` |
 | Malformed payloads are quarantined | `testMalformedPayloadIsQuarantined` |
+| An older snapshot cannot overwrite a newer row | `testStaleDeadLetterDoesNotOverwriteNewerRow` |
+| A newer snapshot does overwrite | `testNewerDeadLetterDoesOverwrite` |
+| An unversioned (legacy) snapshot cannot overwrite a versioned row | `testUnversionedDeadLetterDoesNotOverwriteVersionedRow` |
+| A versioned row replaces an unversioned one | `testVersionedRowReplacesUnversionedRow` |
 | Valid lines ingest; bad lines go to `.rejected` | `testIngestLoadsValidLinesAndRejectsBadOnes` |
 | An orphaned `.inprogress` file from a crash is picked up | `testIngestPicksUpOrphanedInProgressFile` |
 | A transient failure leaves the file for the next run | `testIngestLeavesFileInProgressOnTransientFailure` |
@@ -65,4 +73,6 @@ The tests do not mock PDO. They make MySQL itself fail, using triggers:
 
 - A real dropped TCP connection. `SQLSTATE 40001` exercises the same code path, but the driver's behaviour when the socket dies is not tested.
 - Two engines on different hosts contending for the cursor row lock.
+- A source transaction that outlives the lag window. That is a documented limit, not a tested guarantee.
+- The upgrade scripts in `sql/migrations/`. CI builds fresh schemas only.
 - The limitations listed in [architecture.md](architecture.md#known-limitations).
