@@ -13,3 +13,7 @@ Thumbs.db
 # --- Temporary Files ---
 /tmp/
 *.swp
+# --- Tooling ---
+composer.phar
+.phpunit.cache/
+.phpunit.result.cache

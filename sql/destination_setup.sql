@@ -26,15 +26,17 @@ CREATE TABLE IF NOT EXISTS sync_cursor (
 
 INSERT IGNORE INTO sync_cursor (engine, last_synced_id) VALUES ('SyncEngine', 0);
 
--- Audit log: immutable record of every sync run for financial traceability.
+-- Audit log: one row per sync run, including the ones that failed.
 CREATE TABLE IF NOT EXISTS sync_audit_log (
     id               INT AUTO_INCREMENT PRIMARY KEY,
     engine           VARCHAR(50) NOT NULL,
+    status           VARCHAR(20) NOT NULL DEFAULT 'COMPLETED', -- COMPLETED or ABORTED
     rows_synced      INT UNSIGNED NOT NULL DEFAULT 0,
     rows_failed      INT UNSIGNED NOT NULL DEFAULT 0,
     rows_dlq         INT UNSIGNED NOT NULL DEFAULT 0,
     rows_emergency   INT UNSIGNED NOT NULL DEFAULT 0,
     duration_seconds DECIMAL(8, 2),
     cursor_end       INT UNSIGNED,
+    error_message    TEXT NULL,
     created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;

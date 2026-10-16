@@ -1,13 +1,39 @@
 name: PHP Lint & Syntax Check
 on: [push, pull_request]
 jobs:
+  # Job id stays "check": branch protection requires a status with this name.
   check:
     runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
     steps:
       - uses: actions/checkout@v4
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
+          extensions: pdo_mysql
+          coverage: none
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress
       - name: Lint check
-        run: find src -name "*.php" -exec php -l {} \;
+        run: find src tests -name "*.php" -print0 | xargs -0 -n1 php -l
+      - name: Static analysis
+        run: composer analyse
+      - name: Tests (unit + MySQL integration)
+        env:
+          SENTINEL_TEST_DB_HOST: 127.0.0.1
+          SENTINEL_TEST_DB_PORT: 3306
+          SENTINEL_TEST_DB_USER: root
+          SENTINEL_TEST_DB_PASS: root
+        run: vendor/bin/phpunit --fail-on-skipped
